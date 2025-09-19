@@ -1,0 +1,117 @@
+name: Publish hotel_sales.json
+
+on:
+  schedule:
+    - cron: '0 */4 * * *'   # every 4 hours (00:00, 04:00, 08:00, …) UTC
+  workflow_dispatch:         # allow manual runs
+
+permissions:
+  contents: write
+
+concurrency:
+  group: publish-hotel-sales
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Generate hotel_sales.json
+        env:
+          SOURCE_URL: >-
+            https://strapi.prod.r53.tablethotels.com/api/hotels-on-sale-page?pagination%5BpageSize%5D=1000&locale=en&populate%5Bhotel_groups%5D%5Bpopulate%5D%5B0%5D=hotels&populate%5Bbanner%5D=true&populate%5Bhotels%5D=true&populate%5Bseo%5D%5Bpopulate%5D%5B0%5D=openGraph
+        run: |
+          node - <<'NODE'
+          import fs from 'node:fs';
+
+          const URL = process.env.SOURCE_URL;
+
+          const res = await fetch(URL);
+          if (!res.ok) {
+            console.error('Upstream error:', res.status, await res.text());
+            process.exit(1);
+          }
+          const json = await res.json();
+          const items = toSaleItems(json);
+
+          fs.writeFileSync('hotel_sales.json', JSON.stringify(items, null, 2));
+          console.log(`Wrote ${items.length} items to hotel_sales.json`);
+
+          function toSaleItems(json) {
+            if (Array.isArray(json)) return json.map(pickSaleFields);
+            const { data } = json || {};
+            if (!data) return [];
+
+            if (data?.attributes) return extractFromEntity(data);
+            if (Array.isArray(data)) return data.flatMap(extractFromEntity);
+            return [];
+          }
+
+          function extractFromEntity(entity) {
+            const a = entity?.attributes || {};
+            const direct = Array.isArray(a.hotels) ? a.hotels : [];
+            const rel = a.hotels?.data ?? [];
+            const groups = a.hotel_groups?.data ?? a.hotel_groups ?? [];
+            const fromGroups = groups.flatMap(g => {
+              const ga = g?.attributes || {};
+              const h1 = Array.isArray(ga.hotels) ? ga.hotels : [];
+              const h2 = ga.hotels?.data ?? [];
+              return [...h1, ...h2];
+            });
+
+            const candidates = [...normalize(direct), ...normalize(rel), ...normalize(fromGroups)];
+            const seen = new Set();
+            const out = [];
+            for (const it of candidates) {
+              const pid = it.propId ?? it.prop_id ?? it.propertyId ?? it.id;
+              const key = pid != null ? `p:${pid}` : `i:${it.id ?? Math.random()}`;
+              if (seen.has(key)) continue;
+              seen.add(key);
+              out.push(pickSaleFields(it));
+            }
+            return out;
+          }
+
+          function normalize(arr) {
+            return (arr || []).map(n => (n && typeof n === 'object' && 'attributes' in n)
+              ? { id: n.id, ...n.attributes }
+              : n);
+          }
+
+          function pickSaleFields(src) {
+            const objectID = String(src.propId ?? src.prop_id ?? src.propertyId ?? src.id ?? '');
+            return {
+              objectID,
+              member_sale: src.member_sale ?? null,
+              offer_valid_until: src.offer_valid_until ?? null,
+              sale_ends: src.sale_ends ?? null,
+              location: src.location ?? null,
+              description: src.description ?? null,
+              name: src.name ?? null,
+              propId_or_name: src.propId_or_name ?? null,
+              for_migration: src.for_migration ?? null,
+            };
+          }
+          NODE
+
+      - name: Commit & push if changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [[ -n "$(git status --porcelain)" ]]; then
+            git add hotel_sales.json
+            git commit -m "Update hotel_sales.json ($(date -u +'%Y-%m-%d %H:%M:%S') UTC)"
+            git push origin main
+          else
+            echo "No changes to commit."
+          fi
