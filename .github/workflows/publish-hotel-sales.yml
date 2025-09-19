@@ -1,3 +1,31 @@
+name: Publish hotel_sales.json
+
+on:
+  schedule:
+    - cron: '0 */4 * * *'   # every 4 hours UTC
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Generate hotel_sales.json
         env:
           SOURCE_URL: >-
@@ -15,26 +43,22 @@
           }
           const json = await res.json();
 
-          // ---- Try structured extraction, then a deep fallback scan ----
           let items = toSaleItems(json);
           if (!items.length) {
             console.warn('Primary extractor found 0 items, running deep fallback scan…');
             items = uniqueByObjectID(deepScanForHotels(json).map(pickSaleFields));
           }
 
-          // ---- Print a compact debug summary to the logs ----
-          console.log('DEBUG summary:', JSON.stringify(summarize(json, items.length), null, 2));
-
-          // ---- Guard: never overwrite with [] ----
+          // Never overwrite with [] — only write when we found items
           if (!items.length) {
             console.warn('Extractor produced 0 items. Leaving hotel_sales.json unchanged.');
-            process.exit(0); // no commit happens if nothing changed
+            process.exit(0);
           }
 
           fs.writeFileSync('hotel_sales.json', JSON.stringify(items, null, 2));
           console.log(`Wrote ${items.length} items to hotel_sales.json`);
 
-          // ------- helpers --------
+          // ---------- helpers ----------
           function toSaleItems(json) {
             if (Array.isArray(json)) return json.map(pickSaleFields);
             const { data } = json || {};
@@ -66,24 +90,25 @@
               seen.add(key);
               out.push(pickSaleFields(it));
             }
-            return out.filter(x => x.objectID); // require objectID
+            return out.filter(x => x.objectID);
           }
 
           function normalize(arr) {
-            return (arr || []).map(n => (n && typeof n === 'object' && 'attributes' in n)
-              ? { id: n.id, ...n.attributes }
-              : n);
+            return (arr || []).map(n =>
+              (n && typeof n === 'object' && 'attributes' in n)
+                ? { id: n.id, ...n.attributes }
+                : n
+            );
           }
 
           // Fallback: recursively scan for objects that look like hotel records
           function deepScanForHotels(obj, bucket = []) {
             if (!obj || typeof obj !== 'object') return bucket;
             if (Array.isArray(obj)) { obj.forEach(o => deepScanForHotels(o, bucket)); return bucket; }
-            const keys = Object.keys(obj);
             const hasId = ('propId' in obj) || ('prop_id' in obj) || ('propertyId' in obj) || ('id' in obj);
             const hasNameOrSale = ('name' in obj) || ('member_sale' in obj) || ('offer_valid_until' in obj) || ('sale_ends' in obj);
             if (hasId && hasNameOrSale) bucket.push(obj);
-            for (const k of keys) deepScanForHotels(obj[k], bucket);
+            for (const k of Object.keys(obj)) deepScanForHotels(obj[k], bucket);
             return bucket;
           }
 
@@ -92,8 +117,7 @@
             const out = [];
             for (const it of arr) {
               const oid = String(it.objectID ?? it.propId ?? it.prop_id ?? it.propertyId ?? it.id ?? '');
-              if (!oid) continue;
-              if (seen.has(oid)) continue;
+              if (!oid || seen.has(oid)) continue;
               seen.add(oid);
               out.push({ ...it, objectID: oid });
             }
@@ -109,25 +133,21 @@
               sale_ends: src.sale_ends ?? null,
               location: src.location ?? null,
               description: src.description ?? null,
-              // optional extras (kept if present)
               name: src.name ?? null,
               propId_or_name: src.propId_or_name ?? null,
               for_migration: src.for_migration ?? null,
             };
           }
-
-          function summarize(json, foundCount) {
-            const d = json?.data;
-            const a = d?.attributes;
-            return {
-              foundCount,
-              hasData: !!d,
-              dataIsArray: Array.isArray(d),
-              attrKeys: a ? Object.keys(a).slice(0, 20) : [],
-              hotelsArrayLen: Array.isArray(a?.hotels) ? a.hotels.length : 0,
-              hotelsRelLen: Array.isArray(a?.hotels?.data) ? a.hotels.data.length : 0,
-              groupCount: Array.isArray(a?.hotel_groups?.data) ? a.hotel_groups.data.length
-                         : (Array.isArray(a?.hotel_groups) ? a.hotel_groups.length : 0),
-            };
-          }
           NODE
+
+      - name: Commit & push if changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [[ -n "$(git status --porcelain)" ]]; then
+            git add hotel_sales.json
+            git commit -m "Update hotel_sales.json ($(date -u +'%Y-%m-%d %H:%M:%S') UTC)"
+            git push origin main
+          else
+            echo "No changes to commit."
+          fi
