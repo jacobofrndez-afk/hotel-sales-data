@@ -1,0 +1,106 @@
+name: build-ids-reset
+
+on:
+  schedule:
+    - cron: '0 2 * * *'   # every day at 02:00 UTC
+  workflow_dispatch:       # allow manual runs
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Fetch IDs URL → reset_all.json
+        env:
+          IDS_SOURCE_URL: https://static.prod.r53.tablethotels.com/feeds/michelin/hotels.json
+        run: |
+          node - <<'NODE'
+          const fs = require('node:fs');
+
+          const URL = process.env.IDS_SOURCE_URL;
+          if (!URL) { console.error('IDS_SOURCE_URL is missing'); process.exit(1); }
+
+          (async () => {
+            const r = await fetch(URL);
+            if (!r.ok) {
+              console.error('Upstream error', r.status, await r.text());
+              process.exit(1);
+            }
+            let payloadText = await r.text();
+
+            // Try JSON first; if it fails, fall back to plaintext IDs
+            let data;
+            try { data = JSON.parse(payloadText); }
+            catch { data = payloadText; }
+
+            const ids = extractIds(data);
+            if (!ids.length) {
+              console.warn('No IDs found. Not overwriting reset_all.json.');
+              process.exit(0);
+            }
+
+            // Unique + stable string IDs
+            const unique = [...new Set(ids.map(x => String(x)))];
+            const out = unique.map(id => ({ objectID: id }));
+
+            fs.writeFileSync('reset_all.json', JSON.stringify(out, null, 2));
+            console.log(`reset_all.json written with ${out.length} objectIDs`);
+
+            // ------------- helpers -------------
+            function extractIds(input) {
+              // Accept:
+              // - [5832, 12116, ...]
+              // - ["5832", "12116", ...]
+              // - [{ PropertyId: 5832 }, { propertyId: 12116 }, { id: "7576" }, { objectID:"7358" }]
+              // - { Hotels: [ ... ] } / { hotels: [ ... ] } / { ids: [ ... ] } / { data: [ ... ] }
+              // - Plain text with numbers separated by commas/newlines
+              if (Array.isArray(input)) return flatIds(input);
+              if (input && typeof input === 'object') {
+                for (const key of ['Hotels','hotels','ids','IDs','data']) {
+                  if (Array.isArray(input[key])) return flatIds(input[key]);
+                }
+                // last resort: scan all values
+                return flatIds(Object.values(input).flat());
+              }
+              if (typeof input === 'string') {
+                return (input.match(/\d+/g) || []).map(Number);
+              }
+              return [];
+            }
+
+            function flatIds(arr) {
+              const out = [];
+              for (const v of arr) {
+                if (v == null) continue;
+                if (typeof v === 'number' || typeof v === 'string') {
+                  const s = String(v).trim(); if (s) out.push(s);
+                  continue;
+                }
+                if (typeof v === 'object') {
+                  const pid = v.PropertyId ?? v.propertyId ?? v.propId ?? v.prop_id ?? v.propertyID ?? v.id ?? v.objectID;
+                  if (pid != null) out.push(String(pid));
+                }
+              }
+              return out;
+            }
+          })().catch(err => { console.error(err); process.exit(1); });
+          NODE
+
+      - name: Commit & push if changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [[ -n "$(git status --porcelain)" ]]; then
+            git add reset_all.json
+            git commit -m "Update reset_all.json ($(date -u +'%Y-%m-%d %H:%M:%S') UTC)"
+            git push origin main
+          else
+            echo "No changes to commit."
+          fi
