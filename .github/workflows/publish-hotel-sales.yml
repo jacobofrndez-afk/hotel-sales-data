@@ -1,32 +1,4 @@
-name: Publish hotel_sales.json
-
-on:
-  schedule:
-    - cron: '0 */4 * * *'   # every 4 hours UTC
-  workflow_dispatch:
-
-permissions:
-  contents: write
-
-concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: main
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-
-      - name: Generate hotel_sales.json
+  name: Generate hotel_sales.json
         env:
           SOURCE_URL: >-
             https://strapi.prod.r53.tablethotels.com/api/hotels-on-sale-page?pagination%5BpageSize%5D=1000&locale=en&populate%5Bhotel_groups%5D%5Bpopulate%5D%5B0%5D=hotels&populate%5Bbanner%5D=true&populate%5Bhotels%5D=true&populate%5Bseo%5D%5Bpopulate%5D%5B0%5D=openGraph
@@ -46,7 +18,11 @@ jobs:
           let items = toSaleItems(json);
           if (!items.length) {
             console.warn('Primary extractor found 0 items, running deep fallback scan…');
-            items = uniqueByObjectID(deepScanForHotels(json).map(pickSaleFields));
+            items = uniqueByObjectID(
+              deepScanForHotels(json)        // only objects that have a propId-like key
+                .map(pickSaleFields)         // returns null if no propId
+                .filter(Boolean)
+            );
           }
 
           // Never overwrite with [] — only write when we found items
@@ -60,7 +36,7 @@ jobs:
 
           // ---------- helpers ----------
           function toSaleItems(json) {
-            if (Array.isArray(json)) return json.map(pickSaleFields);
+            if (Array.isArray(json)) return json.map(pickSaleFields).filter(Boolean);
             const { data } = json || {};
             if (!data) return [];
             if (data?.attributes) return extractFromEntity(data);
@@ -83,14 +59,12 @@ jobs:
             const candidates = [...normalize(direct), ...normalize(rel), ...normalize(fromGroups)];
             const seen = new Set();
             const out = [];
-            for (const it of candidates) {
-              const pid = it.propId ?? it.prop_id ?? it.propertyId ?? it.id;
-              const key = pid != null ? `p:${pid}` : `i:${it.id ?? Math.random()}`;
-              if (seen.has(key)) continue;
-              seen.add(key);
-              out.push(pickSaleFields(it));
+            for (const mapped of candidates.map(pickSaleFields).filter(Boolean)) {
+              if (seen.has(mapped.objectID)) continue;
+              seen.add(mapped.objectID);
+              out.push(mapped);
             }
-            return out.filter(x => x.objectID);
+            return out; // only real hotels with propId
           }
 
           function normalize(arr) {
@@ -101,13 +75,13 @@ jobs:
             );
           }
 
-          // Fallback: recursively scan for objects that look like hotel records
+          // Fallback: recursively scan for objects that LOOK like hotels
+          // (must have a propId-like key; names like "USA & CANADA" won't pass)
           function deepScanForHotels(obj, bucket = []) {
             if (!obj || typeof obj !== 'object') return bucket;
             if (Array.isArray(obj)) { obj.forEach(o => deepScanForHotels(o, bucket)); return bucket; }
-            const hasId = ('propId' in obj) || ('prop_id' in obj) || ('propertyId' in obj) || ('id' in obj);
-            const hasNameOrSale = ('name' in obj) || ('member_sale' in obj) || ('offer_valid_until' in obj) || ('sale_ends' in obj);
-            if (hasId && hasNameOrSale) bucket.push(obj);
+            const hasPid = ('propId' in obj) || ('prop_id' in obj) || ('propertyId' in obj);
+            if (hasPid) bucket.push(obj);
             for (const k of Object.keys(obj)) deepScanForHotels(obj[k], bucket);
             return bucket;
           }
@@ -116,38 +90,29 @@ jobs:
             const seen = new Set();
             const out = [];
             for (const it of arr) {
-              const oid = String(it.objectID ?? it.propId ?? it.prop_id ?? it.propertyId ?? it.id ?? '');
+              const oid = String(it.objectID);
               if (!oid || seen.has(oid)) continue;
               seen.add(oid);
-              out.push({ ...it, objectID: oid });
+              out.push(it);
             }
             return out;
           }
 
+          // ✅ Only keep entries that have a property id; skip groups/banners/regions
           function pickSaleFields(src) {
-            const objectID = String(src.objectID ?? src.propId ?? src.prop_id ?? src.propertyId ?? src.id ?? '');
+            const pid = src.propId ?? src.prop_id ?? src.propertyId;
+            if (pid == null) return null; // not a hotel
             return {
-              objectID,
+              objectID: String(pid),
               member_sale: src.member_sale ?? null,
               offer_valid_until: src.offer_valid_until ?? null,
               sale_ends: src.sale_ends ?? null,
               location: src.location ?? null,
               description: src.description ?? null,
+              // optional extras
               name: src.name ?? null,
               propId_or_name: src.propId_or_name ?? null,
               for_migration: src.for_migration ?? null,
             };
           }
           NODE
-
-      - name: Commit & push if changed
-        run: |
-          git config user.name  "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          if [[ -n "$(git status --porcelain)" ]]; then
-            git add hotel_sales.json
-            git commit -m "Update hotel_sales.json ($(date -u +'%Y-%m-%d %H:%M:%S') UTC)"
-            git push origin main
-          else
-            echo "No changes to commit."
-          fi
