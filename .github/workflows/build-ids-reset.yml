@@ -3,7 +3,7 @@ name: build-ids-reset
 on:
   schedule:
     - cron: '0 2 * * *'   # every day at 02:00 UTC
-  workflow_dispatch:       # allow manual runs
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -17,28 +17,31 @@ jobs:
         with:
           ref: main
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
       - name: Fetch IDs URL → reset_all.json
         env:
-          IDS_SOURCE_URL: https://static.prod.r53.tablethotels.com/feeds/michelin/hotels.json
+          IDS_SOURCE_URL: https://static.prod.r53.tablethotels.com/feeds/michelin/hotels.json  # <-- your IDs URL
         run: |
           node - <<'NODE'
           const fs = require('node:fs');
 
-          const URL = process.env.IDS_SOURCE_URL;
-          if (!URL) { console.error('IDS_SOURCE_URL is missing'); process.exit(1); }
+          const IDS_URL = process.env.IDS_SOURCE_URL;
+          if (!IDS_URL) { console.error('IDS_SOURCE_URL missing'); process.exit(1); }
 
           (async () => {
-            const r = await fetch(URL);
-            if (!r.ok) {
-              console.error('Upstream error', r.status, await r.text());
+            const res = await fetch(IDS_URL);
+            if (!res.ok) {
+              console.error('Upstream error', res.status, await res.text());
               process.exit(1);
             }
-            let payloadText = await r.text();
 
-            // Try JSON first; if it fails, fall back to plaintext IDs
+            let body = await res.text();
             let data;
-            try { data = JSON.parse(payloadText); }
-            catch { data = payloadText; }
+            try { data = JSON.parse(body); } catch { data = body; }
 
             const ids = extractIds(data);
             if (!ids.length) {
@@ -46,27 +49,24 @@ jobs:
               process.exit(0);
             }
 
-            // Unique + stable string IDs
-            const unique = [...new Set(ids.map(x => String(x)))];
+            const unique = [...new Set(ids.map(String))];
             const out = unique.map(id => ({ objectID: id }));
-
             fs.writeFileSync('reset_all.json', JSON.stringify(out, null, 2));
             console.log(`reset_all.json written with ${out.length} objectIDs`);
 
-            // ------------- helpers -------------
+            // ---- helpers ----
             function extractIds(input) {
               // Accept:
-              // - [5832, 12116, ...]
-              // - ["5832", "12116", ...]
-              // - [{ PropertyId: 5832 }, { propertyId: 12116 }, { id: "7576" }, { objectID:"7358" }]
-              // - { Hotels: [ ... ] } / { hotels: [ ... ] } / { ids: [ ... ] } / { data: [ ... ] }
+              // - [5832, "12116", ...]
+              // - [{ PropertyId: 5832 }, { propertyId: "12116" }, { id: 7576 }, { objectID: "7358" }]
+              // - { Hotels: [...] } / { hotels: [...] } / { ids: [...] } / { data: [...] }
               // - Plain text with numbers separated by commas/newlines
               if (Array.isArray(input)) return flatIds(input);
               if (input && typeof input === 'object') {
                 for (const key of ['Hotels','hotels','ids','IDs','data']) {
                   if (Array.isArray(input[key])) return flatIds(input[key]);
                 }
-                // last resort: scan all values
+                // last resort: scan nested arrays/values
                 return flatIds(Object.values(input).flat());
               }
               if (typeof input === 'string') {
@@ -81,9 +81,7 @@ jobs:
                 if (v == null) continue;
                 if (typeof v === 'number' || typeof v === 'string') {
                   const s = String(v).trim(); if (s) out.push(s);
-                  continue;
-                }
-                if (typeof v === 'object') {
+                } else if (typeof v === 'object') {
                   const pid = v.PropertyId ?? v.propertyId ?? v.propId ?? v.prop_id ?? v.propertyID ?? v.id ?? v.objectID;
                   if (pid != null) out.push(String(pid));
                 }
