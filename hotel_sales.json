@@ -1,16 +1,5 @@
 [
   {
-    "objectID": "1412",
-    "member_sale": null,
-    "offer_valid_until": null,
-    "sale_ends": null,
-    "location": null,
-    "description": null,
-    "name": "USA & CANADA",
-    "propId_or_name": null,
-    "for_migration": null
-  },
-  {
     "objectID": "7758",
     "member_sale": "Save 20%",
     "offer_valid_until": "For stays thru Mar",
@@ -86,17 +75,6 @@
     "name": "Hotel Bardo Savannah",
     "propId_or_name": "Hotel Bardo Savannah",
     "for_migration": 7486
-  },
-  {
-    "objectID": "1413",
-    "member_sale": null,
-    "offer_valid_until": null,
-    "sale_ends": null,
-    "location": null,
-    "description": null,
-    "name": "MEXICO",
-    "propId_or_name": null,
-    "for_migration": null
   },
   {
     "objectID": "11989",
@@ -207,17 +185,6 @@
     "name": "Cala de Mar Resort & Spa Ixtapa",
     "propId_or_name": "Cala de Mar Resort & Spa Ixtapa",
     "for_migration": 6355
-  },
-  {
-    "objectID": "1414",
-    "member_sale": null,
-    "offer_valid_until": null,
-    "sale_ends": null,
-    "location": null,
-    "description": null,
-    "name": "EUROPE",
-    "propId_or_name": null,
-    "for_migration": null
   },
   {
     "objectID": "13645",
@@ -517,17 +484,6 @@
     "for_migration": 13449
   },
   {
-    "objectID": "1415",
-    "member_sale": null,
-    "offer_valid_until": null,
-    "sale_ends": null,
-    "location": null,
-    "description": null,
-    "name": "ASIA",
-    "propId_or_name": null,
-    "for_migration": null
-  },
-  {
     "objectID": "13936",
     "member_sale": "Save 50%",
     "offer_valid_until": "For stays thru June 2026",
@@ -660,17 +616,6 @@
     "for_migration": 9434
   },
   {
-    "objectID": "1416",
-    "member_sale": null,
-    "offer_valid_until": null,
-    "sale_ends": null,
-    "location": null,
-    "description": null,
-    "name": "AMERICAS",
-    "propId_or_name": null,
-    "for_migration": null
-  },
-  {
     "objectID": "6315",
     "member_sale": "Stay 2, Save 20%",
     "offer_valid_until": "For stays thru Mar",
@@ -713,17 +658,6 @@
     "name": "Puqio",
     "propId_or_name": "Puqio",
     "for_migration": 14082
-  },
-  {
-    "objectID": "1417",
-    "member_sale": null,
-    "offer_valid_until": null,
-    "sale_ends": null,
-    "location": null,
-    "description": null,
-    "name": "AFRICA",
-    "propId_or_name": null,
-    "for_migration": null
   },
   {
     "objectID": "11661",
