@@ -1,5 +1,29 @@
-  name: Generate hotel_sales.json
-  
+name: publish-hotel-sales
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */4 * * *'   # every 4 hours UTC
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Generate hotel_sales.json
+        env:
           SOURCE_URL: >-
             https://strapi.prod.r53.tablethotels.com/api/hotels-on-sale-page?pagination%5BpageSize%5D=1000&locale=en&populate%5Bhotel_groups%5D%5Bpopulate%5D%5B0%5D=hotels&populate%5Bbanner%5D=true&populate%5Bhotels%5D=true&populate%5Bseo%5D%5Bpopulate%5D%5B0%5D=openGraph
         run: |
@@ -15,19 +39,16 @@
           }
           const json = await res.json();
 
+          // Extract only REAL hotels (must have propId/prop_id/propertyId)
           let items = toSaleItems(json);
           if (!items.length) {
-            console.warn('Primary extractor found 0 items, running deep fallback scan…');
             items = uniqueByObjectID(
-              deepScanForHotels(json)        // only objects that have a propId-like key
-                .map(pickSaleFields)         // returns null if no propId
-                .filter(Boolean)
+              deepScanForHotels(json).map(pickSaleFields).filter(Boolean)
             );
           }
 
-          // Never overwrite with [] — only write when we found items
           if (!items.length) {
-            console.warn('Extractor produced 0 items. Leaving hotel_sales.json unchanged.');
+            console.warn('No items found. Not overwriting hotel_sales.json.');
             process.exit(0);
           }
 
@@ -35,9 +56,9 @@
           console.log(`Wrote ${items.length} items to hotel_sales.json`);
 
           // ---------- helpers ----------
-          function toSaleItems(json) {
-            if (Array.isArray(json)) return json.map(pickSaleFields).filter(Boolean);
-            const { data } = json || {};
+          function toSaleItems(j) {
+            if (Array.isArray(j)) return j.map(pickSaleFields).filter(Boolean);
+            const { data } = j || {};
             if (!data) return [];
             if (data?.attributes) return extractFromEntity(data);
             if (Array.isArray(data)) return data.flatMap(extractFromEntity);
@@ -59,12 +80,12 @@
             const candidates = [...normalize(direct), ...normalize(rel), ...normalize(fromGroups)];
             const seen = new Set();
             const out = [];
-            for (const mapped of candidates.map(pickSaleFields).filter(Boolean)) {
-              if (seen.has(mapped.objectID)) continue;
-              seen.add(mapped.objectID);
-              out.push(mapped);
+            for (const m of candidates.map(pickSaleFields).filter(Boolean)) {
+              if (seen.has(m.objectID)) continue;
+              seen.add(m.objectID);
+              out.push(m);
             }
-            return out; // only real hotels with propId
+            return out;
           }
 
           function normalize(arr) {
@@ -75,8 +96,6 @@
             );
           }
 
-          // Fallback: recursively scan for objects that LOOK like hotels
-          // (must have a propId-like key; names like "USA & CANADA" won't pass)
           function deepScanForHotels(obj, bucket = []) {
             if (!obj || typeof obj !== 'object') return bucket;
             if (Array.isArray(obj)) { obj.forEach(o => deepScanForHotels(o, bucket)); return bucket; }
@@ -98,10 +117,9 @@
             return out;
           }
 
-          // ✅ Only keep entries that have a property id; skip groups/banners/regions
           function pickSaleFields(src) {
             const pid = src.propId ?? src.prop_id ?? src.propertyId;
-            if (pid == null) return null; // not a hotel
+            if (pid == null) return null; // skip non-hotels like "USA & CANADA"
             return {
               objectID: String(pid),
               member_sale: src.member_sale ?? null,
@@ -109,10 +127,21 @@
               sale_ends: src.sale_ends ?? null,
               location: src.location ?? null,
               description: src.description ?? null,
-              // optional extras
               name: src.name ?? null,
               propId_or_name: src.propId_or_name ?? null,
               for_migration: src.for_migration ?? null,
             };
           }
           NODE
+
+      - name: Commit & push if changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [[ -n "$(git status --porcelain)" ]]; then
+            git add hotel_sales.json
+            git commit -m "Update hotel_sales.json ($(date -u +'%Y-%m-%d %H:%M:%S') UTC)"
+            git push origin main
+          else
+            echo "No changes to commit."
+          fi
