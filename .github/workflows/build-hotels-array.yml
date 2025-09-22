@@ -1,0 +1,102 @@
+name: Build hotels_array.json
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '0 */4 * * *'   # every 4 hours UTC
+
+permissions:
+  contents: write
+
+concurrency:
+  group: build-hotels-array-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Generate hotels_array.json
+        env:
+          SOURCE_URL: https://static.prod.r53.tablethotels.com/feeds/michelin/hotels.json
+        run: |
+          node - <<'NODE'
+          import fs from 'node:fs';
+
+          const URL = process.env.SOURCE_URL;
+
+          const res = await fetch(URL);
+          if (!res.ok) {
+            console.error('Upstream error:', res.status, await res.text());
+            process.exit(1);
+          }
+          const json = await res.json();
+
+          // Try direct arrays first
+          let arr =
+            Array.isArray(json)            ? json :
+            Array.isArray(json.hotels)     ? json.hotels :
+            Array.isArray(json.data)       ? json.data :
+            Array.isArray(json.items)      ? json.items :
+            null;
+
+          // Deep fallback: largest array of objects containing a property id
+          if (!arr) {
+            const candidates = [];
+            (function scan(o){
+              if (!o) return;
+              if (Array.isArray(o)) {
+                if (o.length && typeof o[0] === 'object') candidates.push(o);
+              } else if (typeof o === 'object') {
+                for (const k of Object.keys(o)) scan(o[k]);
+              }
+            })(json);
+            arr = candidates
+              .sort((a,b)=>b.length-a.length)
+              .find(a => a.some(x => x && (x.propertyId || x.propId || x.objectID || x.id)));
+          }
+
+          if (!arr) {
+            console.error('Could not find an array in the feed.');
+            process.exit(1);
+          }
+
+          const seen = new Set();
+          const out = [];
+          for (const it of arr) {
+            const oid = String(it.propertyId ?? it.propId ?? it.objectID ?? it.id ?? '').trim();
+            if (!oid || seen.has(oid)) continue;
+            seen.add(oid);
+            out.push({ objectID: oid });
+          }
+
+          if (!out.length) {
+            console.error('No objectIDs extracted.');
+            process.exit(1);
+          }
+
+          fs.writeFileSync('hotels_array.json', JSON.stringify(out, null, 2));
+          console.log('hotels_array.json written:', out.length, 'rows');
+          NODE
+
+      - name: Commit & push if changed
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if [[ -n "$(git status --porcelain)" ]]; then
+            git add hotels_array.json
+            git commit -m "Update hotels_array.json ($(date -u +'%Y-%m-%d %H:%M:%S') UTC)"
+            git push origin main
+          else
+            echo "No changes to commit."
+          fi
