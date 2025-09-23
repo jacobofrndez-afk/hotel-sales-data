@@ -28,7 +28,7 @@ jobs:
 
       - name: Generate hotels_array.json
         env:
-          SOURCE_URL: https://static.prod.r53.tablethotels.com/feeds/michelin/hotels.json
+          SOURCE_URL: https://strapi.prod.r53.tablethotels.com/api/hotels-on-sale-page?pagination%5BpageSize%5D=1000&locale=en&populate%5Bhotel_groups%5D%5Bpopulate%5D%5B0%5D=hotels&populate%5Bbanner%5D=true&populate%5Bhotels%5D=true&populate%5Bseo%5D%5Bpopulate%5D%5B0%5D=openGraph
         run: |
           node - <<'NODE'
           import fs from 'node:fs';
