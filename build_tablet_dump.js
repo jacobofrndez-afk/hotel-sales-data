@@ -1,52 +1,62 @@
 // build_tablet_dump.js
-// Reads urls/<locale>.txt (one URL per line) → fetches Tablet JSON → writes dumps/<locale>.json (array)
+// Reads urls/<locale>.txt -> fetches Tablet JSON with browser-like headers -> writes dumps/<locale>.json
 
 const fs = require("fs");
-const https = require("https");
 const path = require("path");
 
-// ENV knobs (with sensible defaults)
+// ENV
 const LOCALES = (process.env.LOCALES || "en,fr,es,de,it,pt,ja,zh")
   .split(",").map(s => s.trim()).filter(Boolean);
-const CONCURRENCY = Number(process.env.CONCURRENCY || 10);
-const TIMEOUT_MS = Number(process.env.TIMEOUT_MS || 20000);
-const RETRIES = Number(process.env.RETRIES || 2); // total attempts = 1 + RETRIES
+const CONCURRENCY = Math.max(1, Number(process.env.CONCURRENCY || 3)); // keep low to avoid blocking
+const RETRIES = Math.max(0, Number(process.env.RETRIES || 2));
+const TIMEOUT_MS = Math.max(1, Number(process.env.TIMEOUT_MS || 20000));
 
-const agent = new https.Agent({ keepAlive: true, maxSockets: CONCURRENCY });
+const HEADERS = {
+  // Mimic a normal Chrome request
+  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+  "Accept": "application/json, text/plain, */*",
+  "Accept-Language": "en-US,en;q=0.9",
+  "Origin": "https://www.tablethotels.com",
+  "Referer": "https://www.tablethotels.com/",
+  "Cache-Control": "no-cache",
+  "Pragma": "no-cache",
+  // Some CDNs look at these (harmless if ignored)
+  "Sec-Fetch-Site": "same-origin",
+  "Sec-Fetch-Mode": "cors",
+  "Sec-Fetch-Dest": "empty"
+};
 
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-function fetchJson(url, attempt = 0) {
-  return new Promise((resolve) => {
-    const req = https.get(url, { agent, timeout: TIMEOUT_MS }, (res) => {
-      if (res.statusCode !== 200) {
-        res.resume(); // drain
-        if (attempt < RETRIES && res.statusCode >= 500) {
-          return sleep(300 * (attempt + 1)).then(() => resolve(fetchJson(url, attempt + 1)));
-        }
-        return resolve({ __error: `HTTP_${res.statusCode}`, url });
+async function fetchJson(url, attempt = 0) {
+  // small jitter to avoid bursty pattern
+  await sleep(50 + Math.random() * 150);
+
+  const controller = new AbortController();
+  const t = setTimeout(() => controller.abort(), TIMEOUT_MS);
+
+  try {
+    const res = await fetch(url, { headers: HEADERS, redirect: "follow", signal: controller.signal });
+    clearTimeout(t);
+
+    if (!res.ok) {
+      // Retry only on 5xx or 429; 403 often means blocked — try a couple times anyway
+      const canRetry = res.status >= 500 || res.status === 429 || (res.status === 403 && attempt < RETRIES);
+      if (canRetry && attempt < RETRIES) {
+        await sleep(300 * (attempt + 1));
+        return fetchJson(url, attempt + 1);
       }
-      let data = "";
-      res.on("data", (c) => (data += c));
-      res.on("end", () => {
-        try {
-          resolve(JSON.parse(data));
-        } catch {
-          if (attempt < RETRIES) {
-            return sleep(300 * (attempt + 1)).then(() => resolve(fetchJson(url, attempt + 1)));
-          }
-          resolve({ __error: "PARSE_ERROR", url });
-        }
-      });
-    });
-    req.on("timeout", () => { req.destroy(new Error("TIMEOUT")); });
-    req.on("error", (err) => {
-      if (attempt < RETRIES) {
-        return sleep(300 * (attempt + 1)).then(() => resolve(fetchJson(url, attempt + 1)));
-      }
-      resolve({ __error: "NETWORK_ERROR", url, message: err && err.message });
-    });
-  });
+      return { __error: `HTTP_${res.status}`, url };
+    }
+    return await res.json();
+  } catch (e) {
+    clearTimeout(t);
+    if (attempt < RETRIES) {
+      await sleep(300 * (attempt + 1));
+      return fetchJson(url, attempt + 1);
+    }
+    return { __error: "NETWORK_OR_TIMEOUT", url, message: e && e.message };
+  }
 }
 
 async function fetchAll(urls) {
@@ -62,9 +72,10 @@ async function fetchAll(urls) {
       if (json && !json.__error) { out.push(json); ok++; }
       else { fail++; console.warn("[WARN]", json.__error, json.url); }
       if (idx % 100 === 0) console.log(`Fetched ${idx}/${urls.length} (ok=${ok}, fail=${fail})`);
+      // tiny delay between requests per worker
+      await sleep(50 + Math.random() * 150);
     }
   }
-
   const workers = Array.from({ length: Math.min(CONCURRENCY, queue.length) }, worker);
   await Promise.all(workers);
   console.log(`Done: total=${urls.length}, ok=${ok}, fail=${fail}`);
