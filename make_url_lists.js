@@ -1,31 +1,33 @@
-// make_url_lists.js
+// make_url_lists.js  (replace the top config block with this)
 const fs = require("fs");
 const https = require("https");
 
 const RESET_URL = "https://raw.githubusercontent.com/jacobofrndez-afk/hotel-sales-data/main/reset_all.json";
 
-// Edit locales here (use Tablet’s two-letter codes)
-const LOCALES = ["en", "fr", "es", "de", "it", "pt", "ja", "zh"];
-const ARRIVAL = "2026-01-01";
-const LOS = 1;
+// Read from env (with good defaults)
+const LOCALES = (process.env.LOCALES || "en,fr,es,de,it,pt,ja,zh")
+  .split(",").map(s => s.trim()).filter(Boolean);
+const ARRIVAL = process.env.ARRIVAL || "2026-01-01";
+const LOS = Number(process.env.LOS || 1);
 
-function get(url) {
+// Prefer local file if present (Actions checks out the repo)
+function readResetAll() {
+  if (fs.existsSync("reset_all.json")) {
+    return Promise.resolve(fs.readFileSync("reset_all.json", "utf8"));
+  }
   return new Promise((resolve, reject) => {
-    https
-      .get(url, (res) => {
-        if (res.statusCode !== 200) return reject(new Error("HTTP " + res.statusCode));
-        let data = "";
-        res.on("data", (c) => (data += c));
-        res.on("end", () => resolve(data));
-      })
-      .on("error", reject);
+    https.get(RESET_URL, (res) => {
+      if (res.statusCode !== 200) return reject(new Error("HTTP " + res.statusCode));
+      let data = "";
+      res.on("data", c => (data += c));
+      res.on("end", () => resolve(data));
+    }).on("error", reject);
   });
 }
 
 (async () => {
-  const raw = await get(RESET_URL);
+  const raw = await readResetAll();
   const arr = JSON.parse(raw);
-
   const ids = arr.map(o => o.objectID ?? o.PropertyId ?? o.id).filter(Boolean);
 
   for (const lang of LOCALES) {
