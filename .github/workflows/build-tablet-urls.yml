@@ -1,4 +1,4 @@
-name: Build Tablet URL lists
+name: Build Tablet URL lists & dumps
 
 on:
   workflow_dispatch:
@@ -10,14 +10,18 @@ on:
         description: "Arrival date YYYY-MM-DD"
         default: "2026-01-01"
       los:
-        description: "Length of stay"
+        description: "Length of stay (nights)"
         default: "1"
+      concurrency:
+        description: "Parallel fetches for dumps"
+        default: "10"
   push:
     paths:
       - reset_all.json
       - make_url_lists.js
+      - build_tablet_dump.js
   schedule:
-    - cron: "5 2 * * *"
+    - cron: "5 2 * * *"   # daily 02:05 UTC
 
 permissions:
   contents: write
@@ -30,23 +34,11 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Switch to urls branch (create if missing)
-      - name: Prepare urls branch
-        run: |
-          set -e
-          git fetch origin || true
-          if git ls-remote --exit-code --heads origin urls > /dev/null; then
-            git checkout urls
-            git reset --hard origin/urls
-          else
-            git checkout -b urls
-          fi
-
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
 
-      - name: Generate URL lists
+      - name: Generate URL lists (urls/*.txt)
         env:
           LOCALES: ${{ github.event.inputs.locales || 'en,fr,es,de,it,pt,ja,zh' }}
           ARRIVAL: ${{ github.event.inputs.arrival || '2026-01-01' }}
@@ -55,10 +47,21 @@ jobs:
           node make_url_lists.js
           ls -l urls/*.txt
 
-      - name: Commit & push (no force)
+      - name: Build Tablet dumps (dumps/*.json)
+        env:
+          LOCALES: ${{ github.event.inputs.locales || 'en,fr,es,de,it,pt,ja,zh' }}
+          CONCURRENCY: ${{ github.event.inputs.concurrency || '10' }}
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add urls/*.txt
-          git commit -m "Build URL lists" || echo "No changes to commit"
-          git push origin urls
+          node build_tablet_dump.js
+          ls -l dumps/*.json
+
+      - name: Commit artifacts to 'urls' branch
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          branch: urls
+          create_branch: true
+          commit_message: "Build URL lists & dumps"
+          file_pattern: |
+            urls/*.txt
+            dumps/*.json
+          push_options: '--force-with-lease'
