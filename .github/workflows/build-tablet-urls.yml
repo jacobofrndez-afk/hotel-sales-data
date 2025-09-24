@@ -6,41 +6,38 @@ on:
       locales:
         description: "Locales CSV (e.g. en,fr,es)"
         default: "en,fr,es,de,it,pt,ja,zh"
-        required: false
       arrival:
         description: "Arrival date YYYY-MM-DD"
         default: "2026-01-01"
-        required: false
       los:
-        description: "Length of stay (nights)"
+        description: "Length of stay"
         default: "1"
-        required: false
   push:
     paths:
       - reset_all.json
       - make_url_lists.js
   schedule:
-    - cron: "5 2 * * *"   # daily 02:05 UTC
+    - cron: "5 2 * * *"
+
+permissions:
+  contents: write   # <-- REQUIRED
 
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-
       - name: Generate URL lists
         env:
-          LOCALES: ${{ github.event.inputs.locales }}
-          ARRIVAL: ${{ github.event.inputs.arrival }}
-          LOS: ${{ github.event.inputs.los }}
-        run: |
-          node make_url_lists.js
-          ls -l *_urls.txt || true
-
+          LOCALES: ${{ github.event.inputs.locales || 'en,fr,es,de,it,pt,ja,zh' }}
+          ARRIVAL: ${{ github.event.inputs.arrival || '2026-01-01' }}
+          LOS: ${{ github.event.inputs.los || '1' }}
+        run: node make_url_lists.js
       - name: Commit URL lists
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
