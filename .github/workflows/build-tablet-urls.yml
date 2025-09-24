@@ -10,17 +10,17 @@ on:
         description: "Arrival date YYYY-MM-DD"
         default: "2026-01-01"
       los:
-        description: "Length of stay"
+        description: "Length of stay (nights)"
         default: "1"
   push:
     paths:
       - reset_all.json
       - make_url_lists.js
   schedule:
-    - cron: "5 2 * * *"
+    - cron: "5 2 * * *"   # daily 02:05 UTC
 
 permissions:
-  contents: write   # <-- REQUIRED
+  contents: write
 
 jobs:
   build:
@@ -29,17 +29,22 @@ jobs:
       - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
+
       - name: Generate URL lists
         env:
           LOCALES: ${{ github.event.inputs.locales || 'en,fr,es,de,it,pt,ja,zh' }}
           ARRIVAL: ${{ github.event.inputs.arrival || '2026-01-01' }}
           LOS: ${{ github.event.inputs.los || '1' }}
         run: node make_url_lists.js
-      - name: Commit URL lists
+
+      - name: Commit URL lists to 'urls' branch
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
+          branch: urls
+          create_branch: true
           commit_message: "Build URL lists"
-          file_pattern: "*_urls.txt"
+          file_pattern: "urls/*.txt"
