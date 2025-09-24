@@ -1,16 +1,15 @@
-// make_url_lists.js  (replace the top config block with this)
+// make_url_lists.js
 const fs = require("fs");
 const https = require("https");
 
 const RESET_URL = "https://raw.githubusercontent.com/jacobofrndez-afk/hotel-sales-data/main/reset_all.json";
 
-// Read from env (with good defaults)
+// Read from env (workflow can pass these)
 const LOCALES = (process.env.LOCALES || "en,fr,es,de,it,pt,ja,zh")
   .split(",").map(s => s.trim()).filter(Boolean);
 const ARRIVAL = process.env.ARRIVAL || "2026-01-01";
 const LOS = Number(process.env.LOS || 1);
 
-// Prefer local file if present (Actions checks out the repo)
 function readResetAll() {
   if (fs.existsSync("reset_all.json")) {
     return Promise.resolve(fs.readFileSync("reset_all.json", "utf8"));
@@ -30,11 +29,13 @@ function readResetAll() {
   const arr = JSON.parse(raw);
   const ids = arr.map(o => o.objectID ?? o.PropertyId ?? o.id).filter(Boolean);
 
+  if (!fs.existsSync("urls")) fs.mkdirSync("urls");
+
   for (const lang of LOCALES) {
     const lines = ids.map(id =>
       `https://www.tablethotels.com/bear/property_info?property=${encodeURIComponent(id)}&language=${encodeURIComponent(lang)}&arrival=${ARRIVAL}&los=${LOS}&filters=rate`
     ).join("\n");
-    const out = `${lang}_urls.txt`;
+    const out = `urls/${lang}.txt`;
     fs.writeFileSync(out, lines, "utf8");
     console.log("Wrote", out, "(", ids.length, "lines )");
   }
