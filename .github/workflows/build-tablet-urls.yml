@@ -38,6 +38,7 @@ jobs:
         with:
           node-version: "22"
 
+      # 1) Generate lists: urls/<locale>.txt
       - name: Generate URL lists (urls/*.txt)
         env:
           LOCALES: ${{ github.event.inputs.locales || 'en,fr,es,de,it,pt,ja,zh' }}
@@ -47,6 +48,7 @@ jobs:
           node make_url_lists.js
           ls -l urls/*.txt
 
+      # 2) Fetch Tablet responses and build dumps/<locale>.json
       - name: Build Tablet dumps (dumps/*.json)
         env:
           LOCALES: ${{ github.event.inputs.locales || 'en,fr,es,de,it,pt,ja,zh' }}
@@ -55,6 +57,7 @@ jobs:
           node build_tablet_dump.js
           ls -l dumps/*.json
 
+      # 3) Commit artifacts to the 'urls' branch
       - name: Commit artifacts to 'urls' branch
         uses: stefanzweifel/git-auto-commit-action@v5
         with:
